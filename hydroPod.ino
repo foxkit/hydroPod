@@ -2,66 +2,30 @@
   This example code is in the public domain.
 */
 
+// REQUIRES the following Arduino libraries:
+// - DHT Sensor Library: https://github.com/adafruit/DHT-sensor-library
+// - Adafruit Unified Sensor Lib: https://github.com/adafruit/Adafruit_Sensor
+
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
+#include <DHT_U.h>
+
+#include "ListLib.h"
+
+List <Adafruit_Sensor*> sensor_list;
+
+#define DHT1PIN   2
+
+DHT_Unified dht1(DHT1PIN, DHT22);
+
+void dht1_setup()
+{
+  dht1.begin();
+}
+
 
 char          UUID4_string[] = "63f59d39-e099-4704-8bde-7bdd58095631";
 unsigned char UUID4_bytes[]  = {0x63, 0xf5, 0x9d, 0x39, 0xe0, 0x99, 0x47, 0x04, 0x8b, 0xde, 0x7b, 0xdd, 0x58, 0x09, 0x56, 0x31};
-
-int flasher_count = 0;
-
-class Sensor
-{
-  typedef enum 
-  { 
-    SENSOR_I2c,
-    SENSOR_GPIO,
-    SENSOR_ONE_WIRE,
-    SENSOR_ANALOG,
-    SENSOR_UNKNOWN
-  } SENSOR_t;
-
-  Sensor *next = NULL;
-  SENSOR_t type;
-  unsigned char id;  // sensor ID
-  bool updated;      // true if this sensor has been updated since it was transmitted
-  union
-  {
-    struct
-    {
-      unsigned char address;
-    } i2c;
-    struct
-    {
-      int pin;
-      int polarity;
-    } gpio;
-    struct
-    {
-      int pin;
-      int sequence; // first, second, third -- based on discovery order
-    } one_wire;
-    struct
-    {
-      int pin;
-      int d_min;
-      int d_max;
-      float v_min;
-      float v_max;
-    } analog;
-  } u;
-
-public:
-  Sensor(SENSOR_t _type, unsigned char _id, Sensor *_next)
-  {
-    type    = _type;
-    next    = _next;
-    id      = _id;
-    updated = false;
-  }
-};
-
-Sensor *sensor_list = NULL;
-
-
 
 class MorseFlasher
 {
@@ -72,13 +36,111 @@ class MorseFlasher
   int           error_led;
   unsigned long error_element_end_time_ms;
   int           busy;
-  
+
+#define USE_SIXBIT 1
+#if USE_SIXBIT
+// Technically, this is the DEC 6-bit encoding as used in the 18 and 36-bit machines
+#define SIXBIT(ch) ((ch - 0x20) & 0x3f)
+#define ME(ch, sz, bits) (unsigned short)((SIXBIT(ch)<<10) | (sz<<7) | (bits << (7 - sz)))
+
+  char *find_char_code(char ch)
+  {
+    static char char_code[8];
+    int i;
+    static const unsigned short morse[] =
+    {
+      ME( 'A', 2, 0b01 ),
+      ME( 'B', 4, 0b1000 ),
+      ME( 'C', 4, 0b1010 ),
+      ME( 'D', 3, 0b100 ),
+      ME( 'E', 1, 0b0 ),
+      ME( 'F', 4, 0b0010 ),
+      ME( 'G', 3, 0b110 ),
+      ME( 'H', 4, 0b0000 ),
+      ME( 'I', 2, 0b00 ),
+      ME( 'J', 4, 0b0111 ),
+      ME( 'K', 3, 0b101 ),
+      ME( 'L', 4, 0b0100 ),
+      ME( 'M', 2, 0b11 ),
+      ME( 'N', 2, 0b10 ),
+      ME( 'O', 3, 0b111 ),
+      ME( 'P', 4, 0b0110 ),
+      ME( 'Q', 4, 0b1101 ),
+      ME( 'R', 3, 0b010 ),
+      ME( 'S', 3, 0b000 ),
+      ME( 'T', 1, 0b1 ),
+      ME( 'U', 3, 0b001 ),
+      ME( 'V', 4, 0b0001 ),
+      ME( 'W', 3, 0b011 ),
+      ME( 'X', 4, 0b1001 ),
+      ME( 'Y', 4, 0b1011 ),
+      ME( 'Z', 4, 0b1100 ),
+      ME( '0', 5, 0b11111 ),
+      ME( '1', 5, 0b01111 ),
+      ME( '2', 5, 0b00111 ),
+      ME( '3', 5, 0b00011 ),
+      ME( '4', 5, 0b00001 ),
+      ME( '5', 5, 0b00000 ),
+      ME( '6', 5, 0b10000 ),
+      ME( '7', 5, 0b11000 ),
+      ME( '8', 5, 0b11100 ),
+      ME( '9', 5, 0b11110 ),
+      ME( '.', 6, 0b010101 ),
+      ME( '?', 6, 0b001100 ),
+      ME( ',', 6, 0b110011 ),
+      ME( '/', 5, 0b10010 ),
+      ME( '(', 5, 0b10110 ),
+      ME( ')', 6, 0b101101 ),
+      ME( '&', 5, 0b01000 ),
+      ME( ':', 6, 0b111000 ),
+      ME( ';', 6, 0b010101 ),
+      ME( '=', 5, 0b10001 ),
+      ME( '+', 5, 0b01010 ),
+      ME( '-', 6, 0b100001 ),
+      ME( '_', 6, 0b001101 ),
+      ME( '"', 6, 0b010010 ),
+      ME( '$', 7, 0b0001001 ),
+      ME( '@', 6, 0b011010 ),
+      0
+    };
+    if (islower(ch))
+        ch = toupper(ch);
+    for (i = 0;
+         morse[i] != 0;
+         i++)
+    {
+      if (((morse[i] >> 10) & 0x3f) == SIXBIT(ch))
+      {
+        unsigned char j = ((morse[i] >> 7) & 0x07);
+        unsigned char k = 0;
+        unsigned char bits = (morse[i]&0x007F);
+        for ( ; j > 0; k++, j--, bits<<=1)
+          char_code[k] = (((bits & 0x40) != 0) ? '=' : '.');
+        char_code[k] = '\0';
+        Serial.print("Coded match: ");
+        Serial.print(morse[i], BIN);
+        Serial.print("  Char \"");
+        Serial.print(ch);
+        Serial.print("\" -> ");
+        Serial.println(char_code);
+        return &char_code[0];
+      }
+    }
+    Serial.print("Char \"");
+    Serial.print(ch);
+    Serial.println("\" -> not found");
+    char_code[0] = ' ';
+    char_code[1] = '\0';
+    return &char_code[0];
+  }
+#else
   typedef const struct code_element_s
   {
     const char ch;
     const char elements[8];
   } code_element_t;
-  
+
+  // This representation of morse code is taking up almost 600 bytes, which is 30% of the total RAM on a Nano
   const char *find_char_code(char ch)
   {
     int i;
@@ -148,10 +210,11 @@ class MorseFlasher
       if (morse[i].ch == ch)
         return &(morse[i].elements[0]);
     }
-//    Serial.print("Char not found: ");
+//    Serial.print(F("Char not found: "));
 //    Serial.println(ch);
     return "........";
   }
+#endif
   
   long time_difference(unsigned long t1, unsigned long t2)
   {
@@ -635,13 +698,6 @@ public:
       return;
     }
     message[msg_index++] = b;
-//    Serial.print("c");
-//    Serial.print(msg_index-1);
-//    Serial.print(":");
-//    Serial.print(state);
-//    Serial.print("=");
-//    Serial.print(b,HEX);
-//    Serial.print("  ");
     switch (state)
     {
       case RM_IDLE:
@@ -741,6 +797,7 @@ void setup()
 {
   // initialize serial:
   Serial.begin(9600);
+  dht1_setup();
   // make the pins outputs:
   pinMode(LED_BUILTIN, OUTPUT);
   MF.send("ok");
