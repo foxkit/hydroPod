@@ -6,23 +6,64 @@
 // - DHT Sensor Library: https://github.com/adafruit/DHT-sensor-library
 // - Adafruit Unified Sensor Lib: https://github.com/adafruit/Adafruit_Sensor
 
+using namespace std;
+
+#include <Wire.h>
+#include <SPI.h>
+
+// Unified sensor class
 #include <Adafruit_Sensor.h>
+
+// DHT Driver for unified Sensor class
 #include <DHT.h>
 #include <DHT_U.h>
 
-#include "ListLib.h"
+#include <Adafruit_BME280.h>
 
-List <Adafruit_Sensor*> sensor_list;
+//#include "ListLib.h"
 
 #define DHT1PIN   2
 
-DHT_Unified dht1(DHT1PIN, DHT22);
+#define MAX_SENSORS  ((unsigned char)(8))
+char sensor_index = 0;
 
-void dht1_setup()
+#define MAX_SUBNAME 7
+typedef struct sensor_list_s 
 {
-  dht1.begin();
+   Adafruit_Sensor *sensor;
+   char subname[MAX_SUBNAME+1];
+   uint32_t last_sample;
+   uint32_t sample_period_MS; 
+} sensor_list_t;
+
+sensor_list_t sensors[MAX_SENSORS];
+
+void add_sensor(Adafruit_Sensor *sensor, char const *subname)
+{
+  if (sensor_index == MAX_SENSORS)
+    Serial.print(F("No space for sensor"));
+  else
+  {
+    sensors[(short)sensor_index].sensor = sensor;
+    strncpy(&sensors[(short)sensor_index].subname[0], subname, MAX_SUBNAME);
+    sensors[(short)sensor_index].last_sample = 0;
+    sensors[(short)sensor_index].sample_period_MS = 0;
+    sensor_index++;
+  }
 }
 
+void enroll_BME280(Adafruit_BME280 *bme)
+{
+  add_sensor(bme->getTemperatureSensor(),String(F("Temp")).c_str());
+  add_sensor(bme->getPressureSensor(),   String(F("Pres")).c_str());
+  add_sensor(bme->getHumiditySensor(),   String(F("Hum")).c_str());
+}
+
+void enroll_DHT(DHT_Unified *dht)
+{
+  add_sensor(dht->ptrTemperature(), String(F("Temp")).c_str());
+  add_sensor(dht->ptrHumidity(),    String(F("Hum")).c_str());
+}
 
 char          UUID4_string[] = "63f59d39-e099-4704-8bde-7bdd58095631";
 unsigned char UUID4_bytes[]  = {0x63, 0xf5, 0x9d, 0x39, 0xe0, 0x99, 0x47, 0x04, 0x8b, 0xde, 0x7b, 0xdd, 0x58, 0x09, 0x56, 0x31};
@@ -94,6 +135,7 @@ class MorseFlasher
       ME( '&', 5, 0b01000 ),
       ME( ':', 6, 0b111000 ),
       ME( ';', 6, 0b010101 ),
+      ME( '\'',6, 0b011110 ),
       ME( '=', 5, 0b10001 ),
       ME( '+', 5, 0b01010 ),
       ME( '-', 6, 0b100001 ),
@@ -101,6 +143,7 @@ class MorseFlasher
       ME( '"', 6, 0b010010 ),
       ME( '$', 7, 0b0001001 ),
       ME( '@', 6, 0b011010 ),
+      ME( '!', 6, 0b101011 ),
       0
     };
     if (islower(ch))
@@ -117,12 +160,12 @@ class MorseFlasher
         for ( ; j > 0; k++, j--, bits<<=1)
           char_code[k] = (((bits & 0x40) != 0) ? '=' : '.');
         char_code[k] = '\0';
-        Serial.print("Coded match: ");
-        Serial.print(morse[i], BIN);
-        Serial.print("  Char \"");
-        Serial.print(ch);
-        Serial.print("\" -> ");
-        Serial.println(char_code);
+//        Serial.print("Coded match: ");
+//        Serial.print(morse[i], BIN);
+//        Serial.print("  Char \"");
+//        Serial.print(ch);
+//        Serial.print("\" -> ");
+//        Serial.println(char_code);
         return &char_code[0];
       }
     }
@@ -212,7 +255,7 @@ class MorseFlasher
     }
 //    Serial.print(F("Char not found: "));
 //    Serial.println(ch);
-    return "........";
+    return "..........";
   }
 #endif
   
@@ -793,20 +836,86 @@ public:
 
 RM com(MF);
 
+Adafruit_BME280 bme;
+DHT_Unified dht1(DHT1PIN, DHT22);
+
 void setup() 
 {
+  memset(&sensors[0], 0, sizeof(sensors));
   // initialize serial:
   Serial.begin(9600);
-  dht1_setup();
+  // initialize the BME sensor
+  bme.begin(BME280_ADDRESS_ALTERNATE);
+  enroll_BME280(&bme);
+  // initialize the DHT21 sensor
+  dht1.begin();
+  enroll_DHT(&dht1);
   // make the pins outputs:
   pinMode(LED_BUILTIN, OUTPUT);
   MF.send("ok");
+  Serial.print  (F("Sensor count = ")); Serial.println(sensor_index);
+  sensor_t sensor;
+  Serial.println(F("------------------------------------"));
+  for (int i = 0; i < sensor_index; i++)
+  {
+    sensors[i].sensor->getSensor(&sensor);
+    Serial.print  (F("Sensor #"));      Serial.println(i);
+    sensors[i].sensor->printSensorDetails();
+    Serial.print  (F("Sensor Type: ")); Serial.println(sensor.name);
+    Serial.print  (F("  SubSensor: ")); Serial.println(sensors[i].subname);
+//    Serial.print  (F("Driver Ver:  ")); Serial.println(sensor.version);
+//    Serial.print  (F("Unique ID:   ")); Serial.println(sensor.sensor_id);
+//    Serial.print  (F("Max Value:   ")); Serial.println(sensor.max_value); 
+//    Serial.print  (F("Min Value:   ")); Serial.println(sensor.min_value); 
+//    Serial.print  (F("Resolution:  ")); Serial.println(sensor.resolution); 
+    sensors[i].sample_period_MS = sensor.min_delay/1000;
+//    Serial.print  (F("  Min Delay: ")); Serial.println(sensors[i].sample_period_MS);
+    Serial.println(F("------------------------------------"));
+  }  
 }
-
 
 void loop() 
 {
-  // if there's any serial available, read it:
+  sensors_event_t event;
+  int i;
+  for (i=0; i<sensor_index; i++)
+  {
+    if ((sensors[i].last_sample + sensors[i].sample_period_MS) < millis())
+    {
+      // get the data now
+      int float_count = 0;
+      sensors[i].sensor->getEvent(&event);
+      sensors[i].last_sample = millis()+1;
+      Serial.print(i); Serial.print(": ");
+      switch (event.type) 
+      {
+        case SENSOR_TYPE_ACCELEROMETER:
+        case SENSOR_TYPE_MAGNETIC_FIELD:
+        case SENSOR_TYPE_ORIENTATION:
+        case SENSOR_TYPE_GYROSCOPE:
+        case SENSOR_TYPE_GRAVITY:
+        case SENSOR_TYPE_ROTATION_VECTOR:
+        case SENSOR_TYPE_LINEAR_ACCELERATION:
+        case SENSOR_TYPE_COLOR:
+          float_count = 3;
+          Serial.print("F1: ");       Serial.print  (event.data[0]);
+          Serial.print("  F2: ");     Serial.print  (event.data[1]);
+          Serial.print("  F3: ");     Serial.println(event.data[2]);
+          break;
+        case SENSOR_TYPE_LIGHT:
+        case SENSOR_TYPE_PRESSURE:
+        case SENSOR_TYPE_PROXIMITY:
+        case SENSOR_TYPE_CURRENT:
+        case SENSOR_TYPE_VOLTAGE:
+        case SENSOR_TYPE_RELATIVE_HUMIDITY:
+        case SENSOR_TYPE_AMBIENT_TEMPERATURE:
+        case SENSOR_TYPE_OBJECT_TEMPERATURE:
+          float_count = 1;
+          Serial.print("F:  ");     Serial.println(event.data[0]);
+          break;
+      }
+    }
+  }
   while (Serial.available() > 0) 
   {
     com.receive_byte(Serial.read());
